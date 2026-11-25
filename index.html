@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ECO Field Check</title>
+  <meta name="description" content="Verify tree planting at the tree, even offline. Hybrid AI: Gemini Nano on device, Gemini in the cloud, via Firebase AI Logic." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#0B3D2E" />
+  <link rel="icon" href="./icon.svg" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><img src="./icon.svg" alt="" width="32" height="32" /><span>ECO Field Check</span></div>
+    <div class="status">
+      <span id="net" class="pill">online</span>
+      <span id="dev" class="pill">on-device AI: checking…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card intro">
+      <h1>Proof at the tree, even without signal.</h1>
+      <p>Planters photograph each tree. Gemini Nano checks the photo on the phone or laptop, offline. When the network is back, a cloud "Ghost Audit" tries to disprove every claim. A person approves every payout.</p>
+      <button id="prep" class="ghost">Prepare on-device model</button>
+      <span id="prepMsg" class="muted"></span>
+    </section>
+
+    <section class="card">
+      <h2>1. Record a tree</h2>
+      <div class="grid">
+        <label>Planter name<input id="planter" placeholder="e.g. Wanjiku M." /></label>
+        <label>Species<input id="species" placeholder="e.g. Grevillea robusta" /></label>
+        <label>Site<input id="site" placeholder="e.g. Dundori block 3" /></label>
+        <label>Photo (JPEG/PNG)<input id="photo" type="file" accept="image/jpeg,image/png" capture="environment" /></label>
+      </div>
+      <div class="row">
+        <img id="preview" alt="" />
+        <div class="col">
+          <p id="gps" class="muted">GPS: not captured</p>
+          <button id="gpsBtn" class="ghost">Capture GPS</button>
+          <button id="check" disabled>Check on device</button>
+        </div>
+      </div>
+      <div id="result" class="result hidden"></div>
+    </section>
+
+    <section class="card">
+      <div class="row between">
+        <h2>2. Claims queue</h2>
+        <div>
+          <button id="audit" class="ghost">Run cloud Ghost Audit on pending</button>
+          <button id="csv" class="ghost">Export CSV</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Photo</th><th>Planter / species</th><th>On-device check</th><th>Cloud audit</th><th>Reviewer</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p class="muted small">Claims are stored in this browser until a reviewer approves them. Nothing is paid on AI alone.</p>
+    </section>
+  </main>
+
+  <footer class="muted small">Built by ECO (Grade AI Limited, Nairobi) for #BuildHybridAI 2026 · Firebase AI Logic hybrid inference</footer>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
