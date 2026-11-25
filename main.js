@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app-check.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app-check.js';
 import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
 import { FIREBASE_CONFIG, CLOUD_MODEL_NAME, RECAPTCHA_SITE_KEY, APPCHECK_DEBUG_TOKEN } from './config.js';
 
@@ -9,7 +9,7 @@ const app = initializeApp(cfg);
 if (APPCHECK_DEBUG_TOKEN) self.FIREBASE_APPCHECK_DEBUG_TOKEN = APPCHECK_DEBUG_TOKEN;
 if (RECAPTCHA_SITE_KEY || APPCHECK_DEBUG_TOKEN) {
   initializeAppCheck(app, {
-    provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY || 'debug-only'),
+    provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY || 'debug-only'),
     isTokenAutoRefreshEnabled: true,
   });
 }
