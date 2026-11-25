@@ -28,7 +28,7 @@ The app is an installable PWA with an offline shell (service worker), so it open
 No build step: the app is plain HTML, CSS and JavaScript, loading the Firebase JS SDK (v13.4.0) as ES modules.
 
 1. Create a Firebase project, enable **Firebase AI Logic** with the Gemini Developer API, and register a web app.
-2. Put your web config in [`config.js`](config.js). Register the app with **App Check** (reCAPTCHA v3) and set `RECAPTCHA_SITE_KEY`, or set `APPCHECK_DEBUG_TOKEN` to a debug token registered in the console for local testing.
+2. Put your web config in [`config.js`](config.js). Register the app with **App Check** (Fraud Defense / reCAPTCHA Enterprise) and set `RECAPTCHA_SITE_KEY`, or set `APPCHECK_DEBUG_TOKEN` to a debug token registered in the console for local testing.
 3. Serve the folder over HTTP, for example `npx serve .` or `python3 -m http.server`, and open it in Chrome.
 
 On-device inference needs desktop **Chrome 139+** with `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` set to **Enabled**. Click **Prepare on-device model** once to download Gemini Nano. In other browsers the app still works, with every check in the cloud.
@@ -44,7 +44,7 @@ All calls are in [`main.js`](main.js):
 - `model.initializeDeviceModel(progress)` after a user click, to download Gemini Nano
 - `getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams })` for the Ghost Audit
 - `result.response.inferenceSource` to show where each check ran
-- `initializeAppCheck(app, { provider: new ReCaptchaV3Provider(...) })`
+- `initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(...) })`
 
 ## License
 
