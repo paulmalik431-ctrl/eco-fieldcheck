@@ -7,7 +7,7 @@ export const FIREBASE_CONFIG = {
 };
 // Cloud model used for fallback and for the Ghost Audit.
 export const CLOUD_MODEL_NAME = 'gemini-3.5-flash-lite';
-// reCAPTCHA v3 site key registered with Firebase App Check (production).
-export const RECAPTCHA_SITE_KEY = '';
+// reCAPTCHA Enterprise (Fraud Defense) site key registered with Firebase App Check. Public by design, restricted to the demo domain.
+export const RECAPTCHA_SITE_KEY = '6LdVPDIuAAAAAFG2wmB1wzu0kcUKuzdBVlt4zqzo';
 // App Check debug token for demos and local development (leave '' in production).
 export const APPCHECK_DEBUG_TOKEN = '';
