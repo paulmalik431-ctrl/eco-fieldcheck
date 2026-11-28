@@ -1,11 +1,15 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app-check.js';
 import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
+import {
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc, setDoc, updateDoc, onSnapshot, query, orderBy, limit,
+} from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
 import { FIREBASE_CONFIG, CLOUD_MODEL_NAME, RECAPTCHA_SITE_KEY, APPCHECK_DEBUG_TOKEN } from './config.js';
 
 // ---------- Firebase setup ----------
-const cfg = FIREBASE_CONFIG;
-const app = initializeApp(cfg);
+const app = initializeApp(FIREBASE_CONFIG);
 if (APPCHECK_DEBUG_TOKEN) self.FIREBASE_APPCHECK_DEBUG_TOKEN = APPCHECK_DEBUG_TOKEN;
 if (RECAPTCHA_SITE_KEY || APPCHECK_DEBUG_TOKEN) {
   initializeAppCheck(app, {
@@ -13,6 +17,16 @@ if (RECAPTCHA_SITE_KEY || APPCHECK_DEBUG_TOKEN) {
     isTokenAutoRefreshEnabled: true,
   });
 }
+
+// Firestore with an on-device cache: claims are saved on the phone with no signal
+// and sync to every reviewer's screen when the network returns.
+let db = null, dbError = null;
+try {
+  db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+} catch (e) { dbError = e.message; console.warn(e); }
+const auth = getAuth(app);
+let uid = null;
+
 let ai, fieldModel, auditModel, aiError = null;
 const CLOUD_MODEL = CLOUD_MODEL_NAME || 'gemini-3.5-flash-lite';
 // One JSON schema, used on device (Prompt API responseConstraint) and in the cloud.
@@ -45,42 +59,78 @@ Look hard for signs of fraud or error: staged or reused photos, photos of screen
 Answer in JSON with the same fields. Use "reject" only with clear evidence, "review" if uncertain.`;
 
 try {
-ai = getAI(app, { backend: new GoogleAIBackend() });
-
-// Hybrid: try Gemini Nano on this device, fall back to Gemini in the cloud.
-fieldModel = getGenerativeModel(ai, {
-  mode: InferenceMode.PREFER_ON_DEVICE,
-  onDeviceParams: {
-    createOptions: {
-      expectedInputs: [{ type: 'text', languages: ['en'] }, { type: 'image' }],
-      expectedOutputs: [{ type: 'text', languages: ['en'] }],
+  ai = getAI(app, { backend: new GoogleAIBackend() });
+  // Hybrid: try Gemini Nano on this device, fall back to Gemini in the cloud.
+  fieldModel = getGenerativeModel(ai, {
+    mode: InferenceMode.PREFER_ON_DEVICE,
+    onDeviceParams: {
+      createOptions: {
+        expectedInputs: [{ type: 'text', languages: ['en'] }, { type: 'image' }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      },
+      promptOptions: { responseConstraint: VERDICT_SCHEMA },
     },
-    promptOptions: { responseConstraint: VERDICT_SCHEMA },
-  },
-  inCloudParams: {
-    model: CLOUD_MODEL,
-    generationConfig: { responseMimeType: 'application/json', responseSchema: VERDICT_SCHEMA, temperature: 0.1 },
-  },
-});
-
-// Second opinion always in the cloud, run when there is signal, with an adversarial prompt.
-auditModel = getGenerativeModel(ai, {
-  mode: InferenceMode.ONLY_IN_CLOUD,
-  inCloudParams: {
-    model: CLOUD_MODEL,
-    generationConfig: { responseMimeType: 'application/json', responseSchema: VERDICT_SCHEMA, temperature: 0.1 },
-  },
-});
-
+    inCloudParams: {
+      model: CLOUD_MODEL,
+      generationConfig: { responseMimeType: 'application/json', responseSchema: VERDICT_SCHEMA, temperature: 0.1 },
+    },
+  });
+  // Second opinion always in the cloud, run when there is signal, with an adversarial prompt.
+  auditModel = getGenerativeModel(ai, {
+    mode: InferenceMode.ONLY_IN_CLOUD,
+    inCloudParams: {
+      model: CLOUD_MODEL,
+      generationConfig: { responseMimeType: 'application/json', responseSchema: VERDICT_SCHEMA, temperature: 0.1 },
+    },
+  });
 } catch (e) { aiError = e.message; console.warn(e); }
 
 // ---------- State ----------
 const $ = (id) => document.getElementById(id);
 const KEY = 'eco-fieldcheck-claims-v1';
-let claims = [];
-try { claims = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { claims = []; }
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(claims)); } catch (e) { console.warn('storage full', e); } };
-let current = { image: null, mime: null, hash: null, gps: null };
+let claims = [];               // what the queue shows (from Firestore, or local fallback)
+let localOnly = !db;           // true when Firestore is unavailable
+if (localOnly) { try { claims = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { claims = []; } }
+const saveLocal = () => { try { localStorage.setItem(KEY, JSON.stringify(claims)); } catch (e) { console.warn('storage full', e); } };
+let current = { image: null, mime: null, hash: null, gps: null, thumb: null };
+
+// ---------- Sync ----------
+function setSync(text, cls) { const s = $('sync'); s.textContent = text; s.className = 'pill ' + cls; }
+function startSync() {
+  if (!db) { setSync('sync: this browser only', 'warn'); return; }
+  const q = query(collection(db, 'claims'), orderBy('at', 'desc'), limit(100));
+  onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
+    claims = snap.docs.map((d) => ({ ...d.data(), id: d.id, pending: d.metadata.hasPendingWrites }))
+      .filter((c) => typeof c.thumb === 'string' && c.thumb.startsWith('data:image'));
+    const waiting = claims.filter((c) => c.pending).length;
+    if (waiting) setSync(`${waiting} saved on device, will sync`, 'warn');
+    else setSync(snap.metadata.fromCache ? 'sync: offline copy' : 'synced to reviewers', snap.metadata.fromCache ? 'warn' : 'ok');
+    render();
+  }, (err) => {
+    // e.g. rules not deployed yet: fall back to this browser so the field check keeps working.
+    console.warn(err); localOnly = true;
+    try { claims = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { claims = []; }
+    setSync('sync paused: saved in this browser', 'warn'); render();
+  });
+}
+onAuthStateChanged(auth, (u) => { if (u && !uid) { uid = u.uid; startSync(); } });
+signInAnonymously(auth).catch((e) => {
+  // No signal on first open: keep working on this device.
+  console.warn(e); if (!uid) { localOnly = true; try { claims = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch {} setSync('offline: saved in this browser', 'warn'); render(); }
+});
+
+async function saveClaim(c) {
+  if (localOnly || !db || !uid) { claims.unshift(c); saveLocal(); render(); return; }
+  // setDoc resolves when the server confirms; with no signal it is queued in the
+  // on-device cache and the snapshot listener shows it immediately as pending.
+  setDoc(doc(db, 'claims', c.id), { ...c, ownerUid: uid }).catch((e) => console.warn('save', e));
+}
+async function patchClaim(id, fields) {
+  const c = claims.find((x) => x.id === id); if (c) Object.assign(c, fields);
+  if (localOnly || !db) { saveLocal(); render(); return; }
+  updateDoc(doc(db, 'claims', id), fields).catch((e) => console.warn('update', e));
+  render();
+}
 
 // ---------- Helpers ----------
 function parseJSON(text) {
@@ -90,25 +140,27 @@ function parseJSON(text) {
   return { verdict: 'review', reason: 'Model reply was not valid JSON', issues: ['unparsed'], tree_visible: false, seedling_count: 0, freshly_planted: false };
 }
 
-// Resize to keep on-device input small (Prompt API token budget) and store a thumbnail.
+// Resize for the model (Prompt API token budget) and keep a small thumbnail for sync.
 function loadImage(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const max = 768;
-      const s = Math.min(1, max / Math.max(img.width, img.height));
-      const c = document.createElement('canvas');
-      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      const dataUrl = c.toDataURL('image/jpeg', 0.85);
-      resolve({ dataUrl, hash: aHash(img) });
+      const draw = (max, q) => {
+        const s = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        return c.toDataURL('image/jpeg', q);
+      };
+      resolve({ dataUrl: draw(768, 0.85), thumb: draw(360, 0.7), hash: aHash(img) });
     };
     img.onerror = reject;
     img.src = URL.createObjectURL(file);
   });
 }
 
-// 64-bit average hash: catches the same photo submitted twice, even resized or recompressed.
+// 64-bit average hash: catches the same photo submitted twice, even resized or recompressed,
+// across every phone that has synced the queue.
 function aHash(img) {
   const c = document.createElement('canvas'); c.width = 8; c.height = 8;
   const x = c.getContext('2d'); x.drawImage(img, 0, 0, 8, 8);
@@ -149,8 +201,8 @@ $('prep').onclick = async () => {
 // ---------- Capture ----------
 $('photo').onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
-  const { dataUrl, hash } = await loadImage(f);
-  current.image = dataUrl.split(',')[1]; current.mime = 'image/jpeg'; current.hash = hash;
+  const { dataUrl, thumb, hash } = await loadImage(f);
+  current.image = dataUrl.split(',')[1]; current.mime = 'image/jpeg'; current.hash = hash; current.thumb = thumb;
   $('preview').src = dataUrl; $('check').disabled = false;
 };
 $('gpsBtn').onclick = () => {
@@ -165,8 +217,8 @@ $('gpsBtn').onclick = () => {
 // ---------- On-device check (hybrid) ----------
 $('check').onclick = async () => {
   const c = { id: crypto.randomUUID(), at: new Date().toISOString(), planter: $('planter').value.trim(), species: $('species').value.trim(),
-    site: $('site').value.trim(), gps: current.gps, hash: current.hash, thumb: $('preview').src };
-  // Rule checks that need no AI
+    site: $('site').value.trim(), gps: current.gps, hash: current.hash, thumb: current.thumb };
+  // Rule checks that need no AI, against every claim this device has synced.
   const dup = claims.find((o) => o.hash && hamming(o.hash, c.hash) <= 5);
   const r = $('result'); r.className = 'result'; r.innerHTML = 'Checking…'; $('check').disabled = true;
   const t0 = performance.now();
@@ -175,15 +227,16 @@ $('check').onclick = async () => {
     c.device = parseJSON(res.response.text());
     c.deviceSource = res.response.inferenceSource;
   } catch (e) {
+    console.warn(e);
     c.device = { verdict: 'review', reason: 'No AI available offline on this device; queued for cloud audit.', issues: ['not checked'] };
     c.deviceSource = 'none';
   }
   c.ms = Math.round(performance.now() - t0);
-  if (dup) { c.device.issues = [...(c.device.issues || []), 'duplicate photo of an earlier claim']; c.device.verdict = 'reject'; c.device.reason = 'Same photo as an earlier claim.'; }
+  if (dup) { c.device.issues = [...(c.device.issues || []), `duplicate photo of an earlier claim (${dup.planter || 'unknown'})`]; c.device.verdict = 'reject'; c.device.reason = 'Same photo as an earlier claim.'; }
   if (!c.gps) c.device.issues = [...(c.device.issues || []), 'no GPS'];
   c.audit = null; c.review = 'pending';
-  claims.unshift(c); save(); render();
-  r.innerHTML = `${badge(c.deviceSource)} ${vtag(c.device.verdict)} <b>${c.device.reason || ''}</b><br><span class="muted">Seedlings: ${c.device.seedling_count ?? '—'} · Issues: ${(c.device.issues || []).join(', ') || 'none'} · ${c.ms} ms</span>`;
+  await saveClaim(c);
+  r.innerHTML = `${badge(c.deviceSource)} ${vtag(c.device.verdict)} <b>${esc(c.device.reason) || ''}</b><br><span class="muted">Seedlings: ${c.device.seedling_count ?? '—'} · Issues: ${esc((c.device.issues || []).join(', ')) || 'none'} · ${c.ms} ms</span>`;
   $('check').disabled = false;
 };
 
@@ -191,23 +244,28 @@ $('check').onclick = async () => {
 $('audit').onclick = async () => {
   if (!navigator.onLine) { alertBox('Offline: the audit will run when you are back online.'); return; }
   const pending = claims.filter((c) => !c.audit && c.thumb);
+  $('audit').disabled = true;
   for (const c of pending) {
+    let audit;
     try {
       const data = c.thumb.split(',')[1];
       const res = await auditModel.generateContent([AUDIT_PROMPT(c), { inlineData: { data, mimeType: 'image/jpeg' } }]);
-      c.audit = parseJSON(res.response.text());
-    } catch (e) { c.audit = { verdict: 'review', reason: 'Audit failed: ' + e.message }; }
-    save(); render();
+      audit = parseJSON(res.response.text());
+    } catch (e) { audit = { verdict: 'review', reason: 'Audit failed: ' + e.message }; }
+    await patchClaim(c.id, { audit });
   }
+  $('audit').disabled = false;
 };
 function alertBox(msg) { const r = $('result'); r.className = 'result'; r.textContent = msg; }
 
 // ---------- Reviewer ----------
-window.setReview = (id, v) => { const c = claims.find((x) => x.id === id); if (c) { c.review = v; c.reviewedAt = new Date().toISOString(); save(); render(); } };
+window.setReview = (id, v) => patchClaim(id, { review: v, reviewedAt: new Date().toISOString(), reviewerUid: uid || 'local' });
 
 function render() {
+  const n = (f) => claims.filter(f).length;
+  $('stats').innerHTML = `<b>${n((c) => c.review === 'approved')}</b> approved · <b>${n((c) => c.review === 'pending')}</b> waiting for a person · <b>${n((c) => c.review === 'rejected')}</b> rejected · <b>${n((c) => c.deviceSource === 'on_device')}</b> checked on device`;
   $('rows').innerHTML = claims.map((c) => `<tr>
-    <td><img src="${c.thumb}" alt="" class="thumb"/></td>
+    <td><img src="${c.thumb}" alt="" class="thumb"/>${c.pending ? '<br><span class="pill warn small">on device, syncing</span>' : ''}</td>
     <td><b>${esc(c.planter) || '—'}</b><br>${esc(c.species) || '—'}<br><span class="muted small">${esc(c.site)} ${c.gps ? `· ${c.gps.lat}, ${c.gps.lng}` : '· no GPS'}</span></td>
     <td>${badge(c.deviceSource)}<br>${vtag(c.device?.verdict)}<br><span class="small">${esc(c.device?.reason)}</span></td>
     <td>${c.audit ? vtag(c.audit.verdict) + '<br><span class="small">' + esc(c.audit.reason) + '</span>' : '<span class="muted small">waiting for signal</span>'}</td>
@@ -226,4 +284,5 @@ $('csv').onclick = () => {
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 netStatus(); deviceStatus(); render();
-if (aiError) { const d = document.getElementById('dev'); d.textContent = 'AI not configured: add Firebase config'; d.className = 'pill warn'; }
+if (aiError) { const d = $('dev'); d.textContent = 'AI not configured: add Firebase config'; d.className = 'pill warn'; }
+if (dbError) setSync('sync unavailable', 'warn');
