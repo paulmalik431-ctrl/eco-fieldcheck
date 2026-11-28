@@ -10,7 +10,8 @@ ECO (Grade AI Limited, Nairobi) pays people in Kenya and Tanzania for verified c
 2. **Check on device (hybrid).** `getGenerativeModel(ai, { mode: InferenceMode.PREFER_ON_DEVICE })` sends the photo and claim to **Gemini Nano** in Chrome. The model returns structured JSON (tree visible, seedling count, freshly planted, issues, verdict, reason), enforced on device with the Prompt API `responseConstraint` and in the cloud with `responseSchema`. If Gemini Nano is not available, Firebase AI Logic falls back to Gemini in the cloud automatically. The UI shows `response.inferenceSource` (`on_device` or `in_cloud`) for every check.
 3. **Rule checks without AI.** A 64-bit perceptual hash flags the same photo submitted twice, even resized; claims with no GPS are flagged.
 4. **Ghost Audit in the cloud.** When the device is back online, a second model (`InferenceMode.ONLY_IN_CLOUD`) tries to disprove each claim: staged or reused photos, potted plants, mature trees passed off as new.
-5. **A person decides.** A reviewer approves or rejects each claim. Nothing is paid on AI alone. Claims export to CSV for the funder.
+5. **Saved on the device, synced to every reviewer.** Claims go into Cloud Firestore with its on-device cache (`persistentLocalCache`). With no signal a claim is saved on the phone and marked "on device, syncing"; when the network returns it reaches every reviewer's screen live, and duplicate photos are caught across all synced devices. Each device signs in with Firebase Anonymous Auth, and Firestore security rules only let reviewers change the audit and review fields after a claim is filed.
+6. **A person decides.** A reviewer approves or rejects each claim. Nothing is paid on AI alone. Claims export to CSV for the funder.
 
 The app is an installable PWA with an offline shell (service worker), so it opens and checks on device with no signal.
 
@@ -27,7 +28,7 @@ The app is an installable PWA with an offline shell (service worker), so it open
 
 No build step: the app is plain HTML, CSS and JavaScript, loading the Firebase JS SDK (v13.4.0) as ES modules.
 
-1. Create a Firebase project, enable **Firebase AI Logic** with the Gemini Developer API, and register a web app.
+1. Create a Firebase project, enable **Firebase AI Logic** with the Gemini Developer API, register a web app, create a **Cloud Firestore** database, and enable **Anonymous** sign-in in Authentication.
 2. Put your web config in [`config.js`](config.js). Register the app with **App Check** (Fraud Defense / reCAPTCHA Enterprise) and set `RECAPTCHA_SITE_KEY`, or set `APPCHECK_DEBUG_TOKEN` to a debug token registered in the console for local testing.
 3. Serve the folder over HTTP, for example `npx serve .` or `python3 -m http.server`, and open it in Chrome.
 
@@ -45,6 +46,8 @@ All calls are in [`main.js`](main.js):
 - `getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams })` for the Ghost Audit
 - `result.response.inferenceSource` to show where each check ran
 - `initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(...) })`
+- `initializeFirestore(app, { localCache: persistentLocalCache(...) })`, `setDoc`, `updateDoc` and `onSnapshot(..., { includeMetadataChanges: true })` for offline-first sync
+- `signInAnonymously(getAuth(app))` for per-device identity used by the security rules
 
 ## License
 
