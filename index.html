@@ -16,6 +16,7 @@
     <div class="status">
       <span id="net" class="pill">online</span>
       <span id="dev" class="pill">on-device AI: checking…</span>
+      <span id="sync" class="pill">sync: starting…</span>
     </div>
   </header>
 
@@ -48,21 +49,22 @@
 
     <section class="card">
       <div class="row between">
-        <h2>2. Claims queue</h2>
+        <h2>2. Claims queue <span class="muted small">(live for every reviewer)</span></h2>
         <div>
           <button id="audit" class="ghost">Run cloud Ghost Audit on pending</button>
           <button id="csv" class="ghost">Export CSV</button>
         </div>
       </div>
+      <p id="stats" class="small"></p>
       <table>
         <thead><tr><th>Photo</th><th>Planter / species</th><th>On-device check</th><th>Cloud audit</th><th>Reviewer</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
-      <p class="muted small">Claims are stored in this browser until a reviewer approves them. Nothing is paid on AI alone.</p>
+      <p class="muted small">Claims are saved on the device first and sync to every reviewer through Cloud Firestore when there is signal. Nothing is paid on AI alone.</p>
     </section>
   </main>
 
-  <footer class="muted small">Built by ECO (Grade AI Limited, Nairobi) for #BuildHybridAI 2026 · Firebase AI Logic hybrid inference</footer>
+  <footer class="muted small">Built by ECO (Grade AI Limited, Nairobi) for #BuildHybridAI 2026 · Firebase AI Logic hybrid inference · Cloud Firestore offline sync · Anonymous Auth · App Check</footer>
   <script type="module" src="./main.js"></script>
 </body>
 </html>
